@@ -18,12 +18,14 @@ import { colors, fonts, spacing } from '../../styles/theme';
 import { globalStyles } from '../../styles/globalStyles';
 
 const MealLoggingScreen = ({ navigation }) => {
-  const { user } = useAuth();
+  const { user, userProfile } = useAuth();
   const { meals, addMeal, dailyTotals } = useMeals(user?.uid);
   const [mealDescription, setMealDescription] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [parsedMeal, setParsedMeal] = useState(null);
+  const [suggestions, setSuggestions] = useState([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
 
   const handleParseMeal = async () => {
     if (!mealDescription.trim()) {
@@ -94,6 +96,56 @@ const MealLoggingScreen = ({ navigation }) => {
     });
   };
 
+  const handleGetSuggestions = async () => {
+    setLoadingSuggestions(true);
+    setError('');
+
+    // Get user's goals
+    const goals = userProfile?.goals || {
+      calories: 2000,
+      protein: 150,
+      carbs: 200,
+      fats: 65,
+    };
+
+    // Calculate remaining macros
+    const remaining = {
+      calories: Math.max(goals.calories - dailyTotals.calories, 0),
+      protein: Math.max(goals.protein - dailyTotals.protein, 0),
+      carbs: Math.max(goals.carbs - dailyTotals.carbs, 0),
+      fats: Math.max(goals.fats - dailyTotals.fats, 0),
+    };
+
+    // Get AI suggestions
+    const result = await claudeApi.getMealSuggestions(remaining, {
+      dietary: userProfile?.preferences?.dietary,
+      allergies: userProfile?.preferences?.allergies,
+    });
+
+    setLoadingSuggestions(false);
+
+    if (result.success) {
+      setSuggestions(result.data);
+    } else {
+      setError(result.error);
+      setSuggestions([]);
+    }
+  };
+
+  const handleSelectSuggestion = (suggestion) => {
+    setMealDescription(suggestion.name);
+    setParsedMeal({
+      name: suggestion.name,
+      calories: suggestion.calories,
+      protein: suggestion.protein,
+      carbs: suggestion.carbs,
+      fats: suggestion.fats,
+      confidence: 'high',
+      suggestions: suggestion.description,
+    });
+    setSuggestions([]);
+  };
+
   return (
     <ScrollView style={globalStyles.container} contentContainerStyle={styles.content}>
       {/* Header */}
@@ -156,7 +208,81 @@ const MealLoggingScreen = ({ navigation }) => {
           variant="cyan"
           disabled={loading}
         />
+
+        <View style={styles.divider} />
+
+        <Text style={styles.orText}>OR</Text>
+
+        <NeonButton
+          title="Get AI Meal Suggestions 🤖"
+          onPress={handleGetSuggestions}
+          loading={loadingSuggestions}
+          variant="purple"
+          disabled={loading || loadingSuggestions}
+        />
       </GlowCard>
+
+      {/* AI Meal Suggestions */}
+      {suggestions.length > 0 && (
+        <GlowCard glowColor="purple" intensity="high">
+          <Text style={styles.cardTitle}>🤖 AI Meal Suggestions</Text>
+          <Text style={styles.suggestionsIntro}>
+            Based on your remaining macros, here's what I recommend:
+          </Text>
+
+          {suggestions.map((suggestion, index) => (
+            <TouchableOpacity
+              key={index}
+              style={styles.suggestionCard}
+              onPress={() => handleSelectSuggestion(suggestion)}
+              activeOpacity={0.7}
+            >
+              <View style={styles.suggestionHeader}>
+                <Text style={styles.suggestionName}>{suggestion.name}</Text>
+                <Text style={styles.tapHint}>Tap to use →</Text>
+              </View>
+
+              <Text style={styles.suggestionDescription}>
+                {suggestion.description}
+              </Text>
+
+              <View style={styles.suggestionMacros}>
+                <View style={styles.suggestionMacroItem}>
+                  <Text style={[styles.suggestionMacroValue, { color: colors.neonCyan }]}>
+                    {suggestion.calories}
+                  </Text>
+                  <Text style={styles.suggestionMacroLabel}>cal</Text>
+                </View>
+
+                <View style={styles.suggestionMacroItem}>
+                  <Text style={[styles.suggestionMacroValue, { color: colors.neonPink }]}>
+                    {suggestion.protein}g
+                  </Text>
+                  <Text style={styles.suggestionMacroLabel}>protein</Text>
+                </View>
+
+                <View style={styles.suggestionMacroItem}>
+                  <Text style={[styles.suggestionMacroValue, { color: colors.neonYellow }]}>
+                    {suggestion.carbs}g
+                  </Text>
+                  <Text style={styles.suggestionMacroLabel}>carbs</Text>
+                </View>
+
+                <View style={styles.suggestionMacroItem}>
+                  <Text style={[styles.suggestionMacroValue, { color: colors.neonPurple }]}>
+                    {suggestion.fats}g
+                  </Text>
+                  <Text style={styles.suggestionMacroLabel}>fats</Text>
+                </View>
+              </View>
+            </TouchableOpacity>
+          ))}
+
+          <TouchableOpacity onPress={() => setSuggestions([])}>
+            <Text style={styles.cancelText}>Close Suggestions</Text>
+          </TouchableOpacity>
+        </GlowCard>
+      )}
 
       {/* Parsed Meal Preview */}
       {parsedMeal && (
@@ -342,6 +468,70 @@ const styles = StyleSheet.create({
     fontSize: fonts.md,
     textAlign: 'center',
     marginTop: spacing.xl,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: colors.dark,
+    marginVertical: spacing.md,
+  },
+  orText: {
+    fontSize: fonts.sm,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: spacing.md,
+  },
+  suggestionsIntro: {
+    fontSize: fonts.sm,
+    color: colors.textSecondary,
+    marginBottom: spacing.md,
+    lineHeight: 20,
+  },
+  suggestionCard: {
+    backgroundColor: colors.dark,
+    borderRadius: 12,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.neonPurple,
+  },
+  suggestionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  suggestionName: {
+    fontSize: fonts.lg,
+    fontWeight: fonts.bold,
+    color: colors.neonPurple,
+    flex: 1,
+  },
+  tapHint: {
+    fontSize: fonts.xs,
+    color: colors.neonCyan,
+    fontStyle: 'italic',
+  },
+  suggestionDescription: {
+    fontSize: fonts.sm,
+    color: colors.textSecondary,
+    marginBottom: spacing.md,
+    lineHeight: 20,
+  },
+  suggestionMacros: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  suggestionMacroItem: {
+    alignItems: 'center',
+  },
+  suggestionMacroValue: {
+    fontSize: fonts.md,
+    fontWeight: fonts.bold,
+  },
+  suggestionMacroLabel: {
+    fontSize: fonts.xs,
+    color: colors.textTertiary,
+    marginTop: spacing.xs,
   },
 });
 
